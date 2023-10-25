@@ -1,0 +1,55 @@
+version: '3.11'
+
+services:
+
+  redis:
+    image: redis:7.0.11-alpine
+    restart: unless-stopped
+
+  db:
+    image: postgres:15.4-alpine
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    env_file: backend/config/.env
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - '8000:8000'
+    depends_on:
+      - db
+    env_file: backend/config/.env
+    environment:
+      DJANGO_DATABASE_HOST: db
+    command: sh -c "make migrate && poetry run python3.11 backend/manage.py runserver 0.0.0.0:8000"
+
+
+  celery:
+    container_name: celery
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sh -c "cd backend && poetry run celery -A drone_destination worker -l INFO"
+
+  celery-beat:
+    container_name: celery-beat
+    restart: unless-stopped
+    depends_on:
+      - celery
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sh -c "cd backend && poetry run celery -A drone_destination beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+
+
+volumes:
+  postgresql-data:
+    driver: local

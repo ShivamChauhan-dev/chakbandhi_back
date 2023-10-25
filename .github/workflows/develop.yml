@@ -1,0 +1,67 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - develop
+      - stg
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  SSH_USER: ${{ secrets.SSH_USER }}
+  DEPLOY_BRANCH: ${{ github.ref == 'refs/heads/develop' && 'develop' || github.ref == 'refs/heads/stg' && 'stg' || 'None' }}
+
+jobs:
+  quality-assurance:
+    name: Quality Assurance
+    uses: ./.github/workflows/pr.yml
+
+  deploy:
+    name: Deploy
+    needs: quality-assurance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh/
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/github
+          chmod 600 ~/.ssh/github
+          cat >>~/.ssh/config <<END
+
+      - name: Call DEV SSH
+        if: ${{ github.ref == 'refs/heads/develop' }}
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          cat >>~/.ssh/config <<END
+          Host target
+            HostName $SSH_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/github
+            LogLevel ERROR
+            StrictHostKeyChecking no
+          END
+
+      - name: Call STG SSH
+        if: ${{ github.ref == 'refs/heads/stg' }}
+        env:
+          SSH_HOST: ${{ secrets.STG_SSH_HOST }}
+        run: |
+          cat >>~/.ssh/config <<END
+          Host target
+            HostName $SSH_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/github
+            LogLevel ERROR
+            StrictHostKeyChecking no
+          END
+      
+
+      - name: Run deploy
+        run: |
+          ssh target "cd drone-destination/ && docker-compose down && git stash && git fetch origin && git rebase origin/$DEPLOY_BRANCH $DEPLOY_BRANCH && docker-compose build && docker-compose up -d --force-recreate"
